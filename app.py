@@ -5,6 +5,9 @@ from PIL import Image
 import json
 import os
 
+# 🔥 IMPORTANT: EfficientNet preprocessing
+from tensorflow.keras.applications.efficientnet import preprocess_input
+
 app = Flask(__name__)
 
 # ===============================
@@ -19,7 +22,7 @@ model = tf.keras.models.load_model(MODEL_PATH)
 with open("class_indices.json", "r") as f:
     class_indices = json.load(f)
 
-# Reverse mapping: index -> class name
+# Reverse mapping: index -> class label
 idx_to_class = {v: k for k, v in class_indices.items()}
 
 # ===============================
@@ -28,13 +31,17 @@ idx_to_class = {v: k for k, v in class_indices.items()}
 IMG_SIZE = 300  # EfficientNetB3 input size
 
 # ===============================
-# Preprocess Image
+# Preprocess Image (MATCH TRAINING)
 # ===============================
 def preprocess_image(image):
     image = image.convert("RGB")
     image = image.resize((IMG_SIZE, IMG_SIZE))
-    image = np.array(image) / 255.0
+    image = np.array(image, dtype=np.float32)
     image = np.expand_dims(image, axis=0)
+
+    # ✅ SAME preprocessing used during training
+    image = preprocess_input(image)
+
     return image
 
 # ===============================
@@ -45,7 +52,7 @@ def home():
     return jsonify({
         "status": "Model API is running 🚀",
         "model": "EfficientNetB3",
-        "classes": len(idx_to_class)
+        "total_classes": len(idx_to_class)
     })
 
 # ===============================
@@ -54,7 +61,7 @@ def home():
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
-        # Check image
+        # Validate input
         if "image" not in request.files:
             return jsonify({"error": "Image file not provided"}), 400
 
@@ -67,23 +74,22 @@ def predict():
         processed_image = preprocess_image(image)
 
         # Predict
-        predictions = model.predict(processed_image)
-        class_id = int(np.argmax(predictions))
-        confidence = float(np.max(predictions))
+        preds = model.predict(processed_image, verbose=0)
+        class_id = int(np.argmax(preds))
+        confidence = float(np.max(preds))
 
-        # Result
-        result = {
+        # Response
+        return jsonify({
             "predicted_class": idx_to_class[class_id],
             "confidence_percent": round(confidence * 100, 2)
-        }
-
-        return jsonify(result)
+        })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print("❌ Prediction error:", e)
+        return jsonify({"error": "Prediction failed"}), 500
 
 # ===============================
-# Run App (Local only)
+# Run App (Render compatible)
 # ===============================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
